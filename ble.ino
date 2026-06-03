@@ -74,7 +74,7 @@ void setAccel(){
   myIMU.writeRegister(LIS3DH_INT1_CFG, 0x20); //z high
 
   //сила ускорения свободного падения  
-  myIMU.writeRegister(LIS3DH_INT1_THS, 0x20); // 1/8 range
+  myIMU.writeRegister(LIS3DH_INT1_THS, 0x30); // 1,5/8 range
   
   //длительность
   myIMU.writeRegister(LIS3DH_INT1_DURATION, 0x04); // 1 * 1/50 s = 20ms
@@ -143,6 +143,7 @@ void setup() {
 void loop() {
   water = false;
   micro = false;
+  
   //настройка Light Sleep по таймеру 2 мин
   esp_sleep_enable_timer_wakeup(120000000ULL); 
   esp_light_sleep_start();
@@ -155,9 +156,11 @@ void loop() {
     accel = true;
     }
     
-  initBLE();
+  if (!deviceConnected) {
+    BLEDevice::startAdvertising();
+  }
   
-  while (!ds.tick()) {
+  if (!ds.tick()) {
         temp = ds.getTemp();
     }
     
@@ -169,9 +172,14 @@ void loop() {
       water = true;
   }
   
-  start_time = millis();
-  while(millis() - start_time < 2000);
-
+  if(gpio_get_level(GPIO_NUM_1) == 0){
+    micro = true;
+  }
+  
+  if (!ds.tick()) {
+        temp = ds.getTemp();
+    }
+    
   //отправка уведомления
   if (deviceConnected) {
     char buffer[50];
@@ -183,4 +191,7 @@ void loop() {
   }
   uint8_t dataRead;
   myIMU.readRegister(&dataRead, LIS3DH_INT1_SRC);
+
+  start_time = millis();
+  while(millis() - start_time < 20);
 }

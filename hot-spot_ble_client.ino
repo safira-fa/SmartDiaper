@@ -13,6 +13,7 @@
 // настройки MQTT
 const char* mqtt_server = "dev.rightech.io";
 const int mqtt_port = 1883;
+const char* clientId = "smart_diaper_wqtt";
 char accel, micro, water;
 char temp[5];
 const int sending_period = 5;
@@ -123,24 +124,30 @@ bool doConnect = false;
 bool doScan = true;
 String targetDeviceAddress = "";
 unsigned long lastScanTime = 0;
+unsigned long lastAttempt = 0;
 unsigned long lastConnectionCheck = 0;
 const unsigned long SCAN_INTERVAL = 1000;
 const unsigned long CONNECTION_CHECK_INTERVAL = 500;
 
-volatile bool newDataReady = false; // Флаг новых данных от BLE
-
 static void notificationCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-  if (length < 42) return; // Защита от коротких пакетов
-
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)pData[i]);
+  }
+  Serial.println();
+  
   accel = (char)pData[21];
   micro = (char)pData[12];
   water = (char)pData[30];
   for (int i = 38; i < 42; i++){
     temp[i-38] = (char)pData[i];
   }
-  temp[4] = '\0';
-  
-  newDataReady = true;
+  client.publish(accel_topic, String(accel).c_str(), retain_flag);
+  yield();
+  client.publish(micro_topic, String(micro).c_str(), retain_flag);
+  yield();
+  client.publish(water_topic, String(water).c_str(), retain_flag);
+  yield();
+  client.publish(temp_topic, temp, retain_flag);
 }
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
@@ -201,20 +208,16 @@ void checkConnection() {
 }
 
 void tryReconnect() {
-  if (client.connected()) return;
-  
-  static unsigned long lastAttempt = 0;
+  lastAttempt = 0;
   if (millis() - lastAttempt < 5000) return;  // Пробуем раз в 5 сек
   lastAttempt = millis();
   
-  String clientId = "smart_diaper_wqtt";
-  if (client.connect(clientId.c_str())) {
+  if (client.connect(clientId)) {
     Serial.println("MQTT connected");
   } else {
-    Serial.println("MQTT connect failed: " + String(client.state()));
+    Serial.println("MQTT connect failed");
   }
 }
-bool wifiEverConnected = false; // Флаг, что мы хоть раз подключились к роутеру
 
 void setup() {
   Serial.begin(115200);
@@ -223,44 +226,23 @@ void setup() {
   
   if (tryConnectToWiFi()) {
     Serial.println("Подключился к Wi-fi");
-    wifiEverConnected = true;
-    
     client.setServer(mqtt_server, mqtt_port);
-    client.setKeepAlive(15);
+    client.setKeepAlive(30);
     client.setBufferSize(512);
-    
     BLEDevice::init("ESP32_BLE_Client");
     scanForDevices();
     return;
   }
   
-  // Если не подключились при старте - включаем режим настройки
   configStart = millis();
   startAP();
 }
 
 void loop() {
-  //работа с WI-FI и MQTT ===
   if (WiFi.status() == WL_CONNECTED) {
-    if (!client.connected()) {
-      tryReconnect();
-    }
-    client.loop(); 
+    if (!client.connected()) tryReconnect();
+    client.loop();
     
-    //отправка данных из BLE в MQTT
-    if (newDataReady && client.connected()) {
-      client.publish(accel_topic, String(accel).c_str(), retain_flag);
-      yield();
-      client.publish(micro_topic, String(micro).c_str(), retain_flag);
-      yield();
-      client.publish(water_topic, String(water).c_str(), retain_flag);
-      yield();
-      client.publish(temp_topic, String(temp).c_str(), retain_flag);
-      
-      newDataReady = false;
-    }
-    
-    //логика BLE
     if (doConnect) {
       if (connectToServer(BLEAddress(targetDeviceAddress.c_str()))) {
         Serial.println("Successfully connected!");
@@ -273,23 +255,12 @@ void loop() {
     }
     if (doScan) scanForDevices();
     checkConnection();
-    
     delay(10);
     return;
-  } 
-
-  else if (wifiEverConnected) {
-    Serial.println("Wi-Fi lost. Reconnecting...");
-    WiFi.reconnect();
-    delay(2000);
-  } 
-  
-  //режим настройки сети (Captive Portal)
-  else {
-    dnsServer.processNextRequest();
-    server.handleClient();
-    checkConfigTimeout();
   }
-  
+    
+  dnsServer.processNextRequest();
+  server.handleClient();
+  checkConfigTimeout();
   delay(10);
 }
