@@ -86,7 +86,7 @@ void setAccel(){
   dataToWrite |= 0x08; //Latch interrupt (Cleared by reading int1_src)
   myIMU.writeRegister(LIS3DH_CTRL_REG5, dataToWrite);
 
-  //генерация прерывания на INT1, INT2
+  //генерация прерывания на INT1, на INT2 - нет 
   myIMU.writeRegister(LIS3DH_CTRL_REG3, 0x60);
   myIMU.writeRegister(LIS3DH_CTRL_REG6, 0x00);
 }
@@ -148,34 +148,44 @@ void loop() {
   esp_sleep_enable_timer_wakeup(120000000ULL); 
   esp_light_sleep_start();
 
-  //опрос датчиков
+  //опрос датчиков прерываний
   if(gpio_get_level(GPIO_NUM_1) == 0){
     micro = true;
     }
   if(gpio_get_level(GPIO_NUM_2) == 1){
     accel = true;
     }
-    
+  
+  //запуск Bluetooth
   if (!deviceConnected) {
     BLEDevice::startAdvertising();
   }
   
+  //измерение температуры
   if (!ds.tick()) {
         temp = ds.getTemp();
     }
-    
+  
+  //определение положения
   if(myIMU.readFloatAccelZ()<0.4 && myIMU.readFloatAccelZ()>-0.4){
     accel = false;
     }
 
+  //мокрый ли подгузник
   if(gpio_get_level(GPIO_NUM_0) == 0){
       water = true;
   }
   
+  //повторная проверка микрофона
   if(gpio_get_level(GPIO_NUM_1) == 0){
     micro = true;
   }
   
+  //задержка для установки связи BLE
+  start_time = millis();
+  while(millis() - start_time < 2000);
+  
+  //повторное измерение температуры
   if (!ds.tick()) {
         temp = ds.getTemp();
     }
@@ -189,6 +199,8 @@ void loop() {
     start_time = millis();
     while(millis() - start_time < 100);
   }
+
+  //очищение пина прерываний акселерометра
   uint8_t dataRead;
   myIMU.readRegister(&dataRead, LIS3DH_INT1_SRC);
 

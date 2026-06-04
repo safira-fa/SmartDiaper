@@ -6,6 +6,7 @@
 #include <BLEClient.h>
 #include <PubSubClient.h>
 
+//характеристики BLE
 #define SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define TX_UUID "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 #define TARGET_DEVICE_NAME "ESP_C3_BLE"
@@ -69,6 +70,7 @@ const char* CONFIG_PAGE = R"rawliteral(
 </html>
 )rawliteral";
 
+//подключение к сохраненному Wi-fi
 bool tryConnectToWiFi() {
   if (!prefs.isKey(PREF_SSID_KEY) || !prefs.isKey(PREF_PASS_KEY)) return false;
   String ssid = prefs.getString(PREF_SSID_KEY, "");
@@ -83,6 +85,7 @@ bool tryConnectToWiFi() {
   return false;
 }
 
+//создание точки доступа Wi-fi
 void startAP() {
   WiFi.softAP(AP_SSID, AP_PASSWORD);
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -112,6 +115,7 @@ void startAP() {
   server.begin();
 }
 
+//проверка таймаута подключения к Wi-fi
 void checkConfigTimeout() {
   if (millis() - configStart > configTimeout) ESP.restart();
 }
@@ -129,6 +133,7 @@ unsigned long lastConnectionCheck = 0;
 const unsigned long SCAN_INTERVAL = 1000;
 const unsigned long CONNECTION_CHECK_INTERVAL = 500;
 
+//обработка (пересылка по MQTT) сообщения от BLE
 static void notificationCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
   for (int i = 0; i < length; i++) {
     Serial.print((char)pData[i]);
@@ -150,6 +155,7 @@ static void notificationCallback(BLERemoteCharacteristic* pBLERemoteCharacterist
   client.publish(temp_topic, temp, retain_flag);
 }
 
+//класс для клиента BLE
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     if (advertisedDevice.haveName() && advertisedDevice.getName() == TARGET_DEVICE_NAME) {
@@ -161,6 +167,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+//подключение к BLE серверу
 bool connectToServer(BLEAddress pAddress) {
   pClient = BLEDevice::createClient();
   if (!pClient->connect(pAddress)) return false;
@@ -177,11 +184,11 @@ bool connectToServer(BLEAddress pAddress) {
     BLERemoteDescriptor* desc = pTXCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902));
     if (desc) desc->writeValue(notifyOn, 2, true);
   }
-  
   deviceConnected = true;
   return true;
 }
 
+//поиск устройств BLE по близости
 void scanForDevices() {
   if (millis() - lastScanTime < SCAN_INTERVAL) return;
   lastScanTime = millis();
@@ -194,6 +201,7 @@ void scanForDevices() {
   pBLEScan->start(1, false);
 }
 
+//проверка активности BLE соединения
 void checkConnection() {
   if (millis() - lastConnectionCheck < CONNECTION_CHECK_INTERVAL) return;
   lastConnectionCheck = millis();
@@ -207,6 +215,7 @@ void checkConnection() {
   }
 }
 
+//переподключение по BLE
 void tryReconnect() {
   lastAttempt = 0;
   if (millis() - lastAttempt < 5000) return;  // Пробуем раз в 5 сек
@@ -223,9 +232,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   prefs.begin(PREF_NS, false);
-  
+  //пытаемся подключиться по сохраненным данным сети
   if (tryConnectToWiFi()) {
     Serial.println("Подключился к Wi-fi");
+    //настраиваем и начинаем поиск BLE устройств
     client.setServer(mqtt_server, mqtt_port);
     client.setKeepAlive(30);
     client.setBufferSize(512);
@@ -233,17 +243,17 @@ void setup() {
     scanForDevices();
     return;
   }
-  
+  //если не удалось - запускаем точку доступа Wi-fi
   configStart = millis();
   startAP();
 }
 
 void loop() {
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) { //если Wi-fi подключен
     if (!client.connected()) tryReconnect();
-    client.loop();
+    client.loop(); //подключаемся к BLE серверу
     
-    if (doConnect) {
+    if (doConnect) { //если подключились 
       if (connectToServer(BLEAddress(targetDeviceAddress.c_str()))) {
         Serial.println("Successfully connected!");
         doConnect = false;
@@ -253,14 +263,14 @@ void loop() {
         doScan = true;
       }
     }
-    if (doScan) scanForDevices();
-    checkConnection();
+    if (doScan) scanForDevices(); //иначе продолжаем поиск
+    checkConnection(); //проверяем соединение
     delay(10);
     return;
   }
-    
-  dnsServer.processNextRequest();
-  server.handleClient();
+  //если не удалось подключиться к Wi-fi, включаем режим точки доступа  
+  dnsServer.processNextRequest(); //перенаправляем пользователя на IP страницы авторизации
+  server.handleClient(); //запускаем обработку html-страницы
   checkConfigTimeout();
   delay(10);
 }
